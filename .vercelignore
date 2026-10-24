@@ -1,0 +1,8 @@
+# Only the browser app is needed in a static deployment.
+dev/
+.qa/
+.playwright-mcp/
+node_modules/
+.git/
+.vercel/
+README.md

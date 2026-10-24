@@ -1,0 +1,11 @@
+{
+  "name": "stackr",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A small, local-first Instagram Story layout PWA.",
+  "scripts": {
+    "dev": "node dev/server.mjs",
+    "test": "node --test dev/tests/renderer.test.js"
+  }
+}

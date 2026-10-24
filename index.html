@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f8f5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Stackr</title>
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./js/app.js"></script>
+</head>
+<body>
+  <svg class="svg-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-stack" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="3"/><path d="M5 9h14M5 15h14"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></symbol>
+    <symbol id="i-replace" viewBox="0 0 24 24"><path d="M20 7H4m4-4L4 7l4 4M4 17h16m-4-4 4 4-4 4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></symbol>
+    <symbol id="i-move" viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 4 12 8-12 8Z"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 6-6 4 4 3-3 5 5"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Stackr home"><span class="brand-mark"><svg><use href="#i-stack"/></svg></span>Stackr</a>
+      <div class="header-actions"><span class="local-badge"><span></span>Entirely on your device</span><button id="install-button" class="quiet-button" hidden><svg><use href="#i-download"/></svg>Install app</button></div>
+    </header>
+
+    <main>
+      <div id="editor" class="editor">
+        <aside class="controls">
+          <section class="control-section" aria-labelledby="layout-heading">
+            <div class="section-heading"><h2 id="layout-heading">Choose your layout</h2></div>
+            <div class="layout-options" role="group" aria-label="Story layout">
+              <button class="layout-option" data-rows="2" aria-pressed="false"><span class="layout-icon"><svg viewBox="0 0 36 54" aria-hidden="true"><rect x="1" y="1" width="34" height="52" rx="4"/><path d="M1 27h34"/></svg></span><span class="layout-label">2 rows</span><span class="layout-check"><svg><use href="#i-check"/></svg></span></button>
+              <button class="layout-option" data-rows="3" aria-pressed="false"><span class="layout-icon"><svg viewBox="0 0 36 54" aria-hidden="true"><rect x="1" y="1" width="34" height="52" rx="4"/><path d="M1 18h34M1 36h34"/></svg></span><span class="layout-label">3 rows</span><span class="layout-check"><svg><use href="#i-check"/></svg></span></button>
+            </div>
+          </section>
+
+          <section class="control-section media-instructions" aria-label="Media controls">
+            <p class="section-copy">Tap a frame to add a photo or video.</p>
+            <div class="tip"><svg><use href="#i-move"/></svg><p>Tap again to replace or remove.</p></div>
+          </section>
+
+          <section class="export-section" aria-label="Export controls">
+            <div class="export-details"><span>Story size <strong>9:16</strong></span><span>Quality <strong>1080p</strong></span></div>
+            <button id="export-button" class="primary-button" disabled><svg><use href="#i-download"/></svg><span>Export your story</span><svg class="button-arrow"><use href="#i-arrow"/></svg></button>
+            <p id="export-hint" class="export-hint">Choose a layout to get started.</p>
+            <section class="good-to-know" aria-label="Export information"><span class="info-dot">i</span><p>Photos become a JPEG. Add a video and you get an MP4.<br><span>Videos play together and finish with the shortest clip. Exports are silent.</span></p></section>
+            <p id="compatibility" class="compatibility" hidden></p>
+          </section>
+        </aside>
+
+        <section class="preview-section" aria-label="Story preview">
+          <div class="preview-heading"><span id="preview-status" class="preview-status"></span></div>
+          <div class="preview-workspace">
+            <div id="empty-state" class="empty-state"><div class="empty-illustration"><svg viewBox="0 0 64 102" aria-hidden="true"><rect x="2" y="2" width="60" height="98" rx="8"/><path d="M23 51h18M32 42v18"/></svg></div></div>
+            <div id="story" class="story" hidden><canvas id="preview-canvas" width="540" height="960" aria-label="Your story composition"></canvas><div id="panes" class="panes"></div></div>
+          </div>
+          <div class="preview-footer"><span>1080 × 1920</span></div>
+          <button id="resume-button" class="resume-button" hidden><svg><use href="#i-play"/></svg>Tap to resume video preview</button>
+        </section>
+      </div>
+
+    </main>
+
+  </div>
+
+  <input id="file-input" type="file" accept="image/*,video/*" hidden>
+  <div id="media-pool" class="media-pool" aria-hidden="true"></div>
+  <p id="announcement" class="sr-only" role="status" aria-live="polite"></p>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <dialog id="export-dialog" aria-label="Export" aria-describedby="dialog-detail">
+    <div class="dialog-content">
+      <div id="dialog-symbol" class="dialog-symbol"><span class="spinner"></span></div>
+      <p id="dialog-detail"></p>
+      <div id="progress-area"><div class="progress-label"><span id="progress-label">Preparing</span><output id="progress-value"></output></div><progress id="export-progress" max="100" aria-label="Export progress"></progress></div>
+      <p id="dialog-note" class="dialog-note">Keep this app open until your export is ready.</p>
+      <div class="dialog-actions"><a id="download-button" class="primary-button" hidden><svg><use href="#i-download"/></svg>Download story</a><button id="retry-button" class="primary-button" hidden>Try again</button><button id="dialog-close" class="secondary-button">Cancel export</button></div>
+    </div>
+  </dialog>
+</body>
+</html>
