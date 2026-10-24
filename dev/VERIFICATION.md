@@ -2,6 +2,8 @@
 
 Development tools, tests, and this verification report are stored in `dev/` and excluded from the Vercel deployment. Run the local server with `npm run dev` and the geometry checks with `npm test` from the project root.
 
+The current exporter uses WebCodecs at 60 fps. Earlier MediaRecorder results below are retained as history; the **60 fps export update** section records the current implementation's end-to-end checks.
+
 ## Environment
 
 - Windows, Node.js 20.19.0.
@@ -11,7 +13,7 @@ Development tools, tests, and this verification report are stored in `dev/` and 
 
 ## Results
 
-`npm test`: **12 tests passed**. These cover source crop geometry, consistent preview/export framing and zoom, bounded dragging in both directions at multiple zoom levels, keeping the subject centered while zooming, zoom limits, pane placement, shortest-video duration, and excluding a hidden third pane.
+`npm test`: **19 tests passed**. These cover crop/zoom geometry, movement bounds, pane duration, exact 60 fps timing including fractional endings, MP4 sample offsets and duration, rejection of missing/duplicated encoded frames, reordered presentation timestamps, and encoder color metadata.
 
 Browser checks passed:
 
@@ -76,6 +78,19 @@ Playwright handled navigation, accessible-name/CSS element lookup, clicks, keybo
 - Tests moved to `dev/tests/renderer.test.js` and their import path updated. All 12 tests pass through `npm test`.
 - Added explicit Vercel static-site configuration and `.vercelignore` deployment exclusions. Configuration JSON was parsed and settings checked against Vercel's documentation; an actual Vercel deployment was not performed.
 - The service-worker shell version is now v4. README instructions use `npm run dev`, describe the development/static-hosting split, and include the current features, export behavior, and device limitations.
+
+## 60 fps export update
+
+- Replaced live canvas/MediaRecorder recording with paused, frame-by-frame composition and native WebCodecs H.264 encoding. Timestamps are integer microseconds on a 60 fps timeline. The target bitrate is 12 Mbps, with quality-mode encoding and Level 4.2 H.264 profiles.
+- Removed the preview's 30 fps throttle. Export stops redundant preview drawing and does not use animation callbacks, the display refresh rate, or a wall-clock recording timer to choose output frames.
+- Added a dependency-free MP4 writer with fast-start metadata, sample/presentation timing, keyframe tables, and explicit encoder-provided color matrix, transfer, primaries, and range. The writer rejects missing/duplicated timestamps, incomplete frame counts, mismatched duration, and unsupported format changes.
+- Generated 60 fps, 4-/5-/6-second source videos whose individual frames encode unique binary IDs, with different offsets in each pane. The three-row output is H.264 High / Level 4.2, 1080 × 1920, exactly 4 seconds and 240 decoded frames, with both reported average and nominal frame rates at 60/1. Every source ID in every row was present in sequence: **zero missing or duplicated source frames**.
+- Repeated that check while adding a 25 ms delay to each seek completion. The export waited for the source frames; all three rows again preserved all 240 IDs in order.
+- Tested a moving 60 fps source containing B-frames. The final output is 4 seconds, 240 frames, 1080 × 1920, 4,643,368 bytes, and has no audio. ffprobe reports BT.709 matrix/primaries, sRGB transfer, and limited-range YUV matching the encoder metadata. Four sampled output frames were compared with the corresponding uncompressed canvas frames: RGB SSIM was 0.962–0.965 on this saturated, high-frequency test pattern. H.264 remains lossy; this is not a lossless-export claim.
+- Cancellation during encoding and an injected encoder failure both close the encoder and preserve the composition. Repeated exports succeed afterward. Injected backgrounding still aborts cleanly.
+- With WebCodecs deliberately unavailable, JPEG export remains functional at 1080 × 1920 and MP4 export is disabled with a compatibility message. There is no silent 30 fps fallback.
+- An offline reload followed by a zoomed mixed-media MP4 export succeeds in a 390 × 844 Chromium touch context. Completion reports 60 fps and 100%, with no horizontal overflow. The service-worker shell is v5 and includes both new JavaScript modules.
+- `dev/check-frame-cadence.py` reproduces the binary-frame-ID test with optional development-only Python/FFmpeg tools. Both the normal and delayed-decoding exported files passed its verifier. Test artifacts are under ignored `.qa/` paths.
 
 ## Remaining device checks
 

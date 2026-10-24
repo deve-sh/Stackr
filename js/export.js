@@ -1,14 +1,28 @@
 import { drawStory, shortestDuration, STORY_WIDTH, STORY_HEIGHT } from './renderer.js';
-import { seekVideo, playVideo } from './media.js';
+import { seekVideo } from './media.js';
+import { Mp4Writer } from './mp4.js';
+import { VIDEO_FRAME_RATE, VIDEO_BITS_PER_SECOND, TIME_SCALE, videoTimeline, frameTiming } from './video-timing.js';
 
-// Also used for the pre-export file-size estimate in the editor.
-export const VIDEO_BITS_PER_SECOND = 6_000_000;
+export { VIDEO_FRAME_RATE, VIDEO_BITS_PER_SECOND } from './video-timing.js';
 
-export function getMp4MimeType() {
-  if (!globalThis.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) return null;
-  // Explicit H.264 first. The native MP4 default covers Safari's generic MIME support.
-  return ['video/mp4;codecs=avc1.42E028', 'video/mp4;codecs=avc1.4D4028',
-    'video/mp4;codecs=avc1', 'video/mp4'].find(type => MediaRecorder.isTypeSupported(type)) ?? null;
+let configPromise;
+export function getVideoExportConfig() {
+  if (!globalThis.VideoEncoder || !globalThis.VideoFrame) return Promise.resolve(null);
+  configPromise ??= (async () => {
+    // Level 4.2 supports 1080 x 1920 at 60 fps; the old Level 4.0 did not.
+    for (const codec of ['avc1.64002a', 'avc1.4d402a', 'avc1.42e02a']) {
+      try {
+        const config = {
+          codec, width: STORY_WIDTH, height: STORY_HEIGHT,
+          framerate: VIDEO_FRAME_RATE, bitrate: VIDEO_BITS_PER_SECOND,
+          bitrateMode: 'variable', latencyMode: 'quality', avc: { format: 'avc' },
+        };
+        if ((await VideoEncoder.isConfigSupported(config)).supported) return config;
+      } catch { /* Try another H.264 profile, never a lower resolution or fps. */ }
+    }
+    return null;
+  })();
+  return configPromise;
 }
 
 function makeCanvas() {
@@ -16,6 +30,18 @@ function makeCanvas() {
   canvas.width = STORY_WIDTH;
   canvas.height = STORY_HEIGHT;
   return canvas;
+}
+
+// Cancellation must interrupt both browser seeking and asynchronous encoding.
+function interruptible(promise, signal, message, timeoutMs = 30000) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const clean = () => { clearTimeout(timeout); signal.removeEventListener('abort', aborted); };
+    const aborted = () => { clean(); reject(signal.reason); };
+    const timeout = setTimeout(() => { clean(); reject(new Error(message)); }, timeoutMs);
+    signal.addEventListener('abort', aborted, { once: true });
+    promise.then(value => { clean(); resolve(value); }, error => { clean(); reject(error); });
+  });
 }
 
 export async function exportPhoto(panes, signal) {
@@ -30,113 +56,70 @@ export async function exportPhoto(panes, signal) {
 }
 
 export async function exportVideo(panes, { signal, onProgress }) {
-  const mimeType = getMp4MimeType();
-  if (!mimeType) throw new Error('MP4 export is unavailable in this browser. Try a current version of Chrome, Edge, or Safari.');
-  const videos = panes.filter(pane => pane.media.kind === 'video').map(pane => pane.media.element);
   const duration = shortestDuration(panes);
+  const { durationUs, frameCount } = videoTimeline(duration);
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(signal.reason);
+  signal.addEventListener('abort', forwardAbort, { once: true });
+  if (signal.aborted) forwardAbort();
+  const jobSignal = controller.signal;
+  const videos = panes.filter(pane => pane.media.kind === 'video').map(pane => pane.media.element);
   const canvas = makeCanvas();
   const context = canvas.getContext('2d', { alpha: false });
-  let stream;
-  let recorder;
+  const writer = new Mp4Writer(canvas.width, canvas.height);
+  const frameDurations = new Map();
+  let encoder;
+  let lastProgress = -1;
   try {
-    signal.throwIfAborted();
-    videos.forEach(video => video.pause());
+    jobSignal.throwIfAborted();
     onProgress({ phase: 'preparing', duration });
-    await Promise.all(videos.map(video => seekVideo(video, 0, signal)));
-    drawStory(context, panes, canvas.width, canvas.height);
-    stream = canvas.captureStream(30);
-    recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: VIDEO_BITS_PER_SECOND });
-    await Promise.all(videos.map(video => playVideo(video, signal)));
-    signal.throwIfAborted();
-
-    return await new Promise((resolve, reject) => {
-      const chunks = [];
-      let frame;
-      let endTimer;
-      let settled = false;
-      let finishing = false;
-      let lastPaint = 0;
-      const startedAt = performance.now();
-
-      const clean = () => {
-        cancelAnimationFrame(frame);
-        clearTimeout(endTimer);
-        clearTimeout(finalizeTimer);
-        signal.removeEventListener('abort', aborted);
-        videos.forEach(video => {
-          video.removeEventListener('waiting', stalled);
-          video.removeEventListener('pause', interrupted);
-          video.removeEventListener('error', failed);
-        });
-        recorder.ondataavailable = recorder.onerror = recorder.onstop = null;
-      };
-      const fail = error => {
-        if (settled) return;
-        settled = true;
-        clean();
-        if (recorder.state !== 'inactive') recorder.stop();
-        reject(error);
-      };
-      const aborted = () => fail(signal.reason);
-      const stalled = () => {
-        // An ended shortest clip is expected, not a buffering failure.
-        if (!finishing && performance.now() - startedAt < duration * 1000 - 150) {
-          fail(new Error('A video paused to buffer. Your layout is safe; please try exporting again.'));
-        }
-      };
-      const failed = () => fail(new Error('A video could not be read during export. Try replacing that clip.'));
-      const interrupted = () => {
-        if (!finishing && !settled) fail(new Error('Video playback was interrupted. Keep the app open and try again.'));
-      };
-      let finalizeTimer;
-      const finish = () => {
-        if (settled || finishing) return;
-        finishing = true;
-        cancelAnimationFrame(frame);
-        clearTimeout(endTimer);
-        videos.forEach(video => video.pause());
-        onProgress({ phase: 'finalizing', duration });
-        finalizeTimer = setTimeout(() => fail(new Error('Saving took too long. Try exporting again.')), 15000);
-        if (recorder.state !== 'inactive') recorder.stop();
-      };
-      const paint = now => {
-        if (settled || finishing) return;
-        if (now - lastPaint >= 1000 / 30 - 1) {
-          drawStory(context, panes, canvas.width, canvas.height);
-          lastPaint = now;
-          onProgress({ phase: 'recording', progress: Math.min(99, (now - startedAt) / (duration * 10)), duration });
-        }
-        frame = requestAnimationFrame(paint);
-      };
-
-      recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
-      recorder.onerror = () => fail(new Error('The browser could not encode this video. Close other apps and try again.'));
-      recorder.onstop = () => {
-        if (settled) return;
-        if (!finishing) {
-          fail(new Error('Recording stopped before the story finished. Keep the app open and try again.'));
-          return;
-        }
-        settled = true;
-        clean();
-        if (!chunks.length) { reject(new Error('The browser produced an empty video. Please try again.')); return; }
-        resolve(new Blob(chunks, { type: 'video/mp4' }));
-      };
-      signal.addEventListener('abort', aborted, { once: true });
-      videos.forEach(video => {
-        video.addEventListener('waiting', stalled);
-        video.addEventListener('pause', interrupted);
-        video.addEventListener('error', failed);
-      });
-      if (signal.aborted) { aborted(); return; }
-      recorder.start(250);
-      frame = requestAnimationFrame(paint);
-      endTimer = setTimeout(finish, duration * 1000);
-    });
-  } finally {
+    const config = await interruptible(getVideoExportConfig(), jobSignal, 'The browser took too long to check video encoding support.');
+    if (!config) throw new Error('This browser cannot encode 1080p60 H.264 video. Try current Chrome, Edge, or Safari on a supported device.');
     videos.forEach(video => video.pause());
-    if (recorder && recorder.state !== 'inactive') recorder.stop();
-    stream?.getTracks().forEach(track => track.stop());
+    encoder = new VideoEncoder({
+      output(chunk, metadata) {
+        if (jobSignal.aborted) return;
+        try { writer.addChunk(chunk, metadata, frameDurations.get(chunk.timestamp)); }
+        catch (error) { controller.abort(error); }
+      },
+      error(error) { controller.abort(new Error(`Video encoding failed: ${error.message}`)); },
+    });
+    encoder.configure(config);
+
+    for (let index = 0; index < frameCount; index++) {
+      jobSignal.throwIfAborted();
+      const timing = frameTiming(index, durationUs);
+      // Seek inside the interval to avoid rounding onto the preceding source
+      // frame. Videos stay paused: wall-clock speed cannot skip source frames.
+      const sampleTime = (timing.timestamp + timing.duration / 2) / TIME_SCALE;
+      await Promise.all(videos.map(video => seekVideo(video, Math.min(sampleTime, video.duration - 0.000001), jobSignal)));
+      jobSignal.throwIfAborted();
+      if (videos.some(video => video.readyState < 2)) throw new Error('A video frame could not be decoded. Please replace that clip and try again.');
+      drawStory(context, panes, canvas.width, canvas.height);
+      const frame = new VideoFrame(canvas, timing);
+      frameDurations.set(timing.timestamp, timing.duration);
+      try { encoder.encode(frame, { keyFrame: index % (VIDEO_FRAME_RATE * 2) === 0 }); }
+      finally { frame.close(); }
+      // Bound queued work. Waiting is fine; dropping an input frame to keep up
+      // with a real-time recording clock is not.
+      if (encoder.encodeQueueSize > 4) {
+        await interruptible(encoder.flush(), jobSignal, 'The browser encoder stopped responding. Please try again.');
+      }
+      const progress = Math.min(99, Math.floor((index + 1) / frameCount * 100));
+      if (progress !== lastProgress) {
+        onProgress({ phase: 'encoding', progress, duration, frames: index + 1, frameCount });
+        lastProgress = progress;
+      }
+    }
+    onProgress({ phase: 'finalizing', duration });
+    await interruptible(encoder.flush(), jobSignal, 'The browser took too long to finish encoding. Please try again.');
+    jobSignal.throwIfAborted();
+    return writer.finish(frameCount, durationUs);
+  } finally {
+    signal.removeEventListener('abort', forwardAbort);
+    if (encoder && encoder.state !== 'closed') encoder.close();
+    videos.forEach(video => video.pause());
+    writer.clear();
     canvas.width = canvas.height = 1;
   }
 }

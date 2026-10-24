@@ -1,6 +1,6 @@
 import { drawStory, movePosition, zoomPosition, clamp, shortestDuration, MIN_ZOOM, MAX_ZOOM } from './renderer.js';
 import { loadMedia, disposeMedia, seekVideo, playVideo, formatDuration } from './media.js';
-import { exportPhoto, exportVideo, getMp4MimeType, VIDEO_BITS_PER_SECOND } from './export.js';
+import { exportPhoto, exportVideo, getVideoExportConfig, VIDEO_BITS_PER_SECOND, VIDEO_FRAME_RATE } from './export.js';
 
 const $ = selector => document.querySelector(selector);
 const icon = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
@@ -15,7 +15,7 @@ const previewCanvas = $('#preview-canvas');
 const previewContext = previewCanvas.getContext('2d', { alpha: false });
 const fileInput = $('#file-input');
 const dialog = $('#export-dialog');
-const mp4Supported = Boolean(getMp4MimeType());
+let mp4Supported = null; // Check the full 1080p60 encoder configuration asynchronously.
 let paneElements = [];
 let fileTarget = null;
 let previewController;
@@ -51,20 +51,21 @@ function updateUI() {
   });
   $('#empty-state').hidden = Boolean(state.rows);
   $('#story').hidden = !state.rows;
-  $('#export-button').disabled = !ready || state.busy || (videos.length > 0 && !mp4Supported);
+  $('#export-button').disabled = !ready || state.busy || (videos.length > 0 && mp4Supported !== true);
   $('#export-button span').textContent = state.busy ? 'Exporting your story…' : 'Export your story';
   $('#preview-status').textContent = state.busy ? 'EXPORTING' : videos.length ? 'LIVE PREVIEW' : '';
   $('#preview-status').classList.toggle('is-live', videos.length > 0 && !state.busy);
-  $('#compatibility').hidden = !state.rows || mp4Supported;
-  $('#compatibility').textContent = 'This browser cannot record MP4. Photo layouts still export as JPEG. For video export, try current Chrome, Edge, or Safari on a supported device.';
+  $('#compatibility').hidden = !state.rows || mp4Supported !== false;
+  $('#compatibility').textContent = 'This browser cannot encode 1080p60 H.264 video with WebCodecs. Photo layouts still export as JPEG. For video export, try current Chrome, Edge, or Safari on a supported device.';
 
   let hint = 'Choose a layout to get started.';
   if (state.rows) hint = `${loaded} of ${state.rows} frames filled.`;
   if (panes.some(pane => pane.loading)) hint = 'Opening your media…';
   if (ready) hint = videos.length
-    ? `Silent MP4 · ${formatDuration(duration)} · about ${Math.max(0.1, estimatedSizeMB).toFixed(1)} MB`
+    ? `Silent MP4 · ${VIDEO_FRAME_RATE} fps · ${formatDuration(duration)} · about ${Math.max(0.1, estimatedSizeMB).toFixed(1)} MB`
     : 'High-quality JPEG';
-  if (ready && videos.length && !mp4Supported) hint = 'MP4 recording is unavailable on this device.';
+  if (ready && videos.length && mp4Supported === null) hint = 'Checking 1080p60 encoding support…';
+  if (ready && videos.length && mp4Supported === false) hint = '1080p60 MP4 encoding is unavailable on this device.';
   $('#export-hint').textContent = hint;
 
   paneElements.forEach((element, index) => {
@@ -280,13 +281,14 @@ document.querySelectorAll('[data-rows]').forEach(button => button.addEventListen
 }));
 
 // The same renderer draws a smaller preview and the full-resolution export.
-let lastPreviewPaint = 0;
-function previewFrame(now) {
-  if (state.rows && !document.hidden && now - lastPreviewPaint >= 1000 / 30 - 1) {
+function previewFrame() {
+  // Use the display refresh rate for preview. During export the paused source
+  // elements belong to the frame encoder; avoid drawing a redundant preview.
+  if (state.rows && !document.hidden && !state.busy) {
     if (previewRunning && !previewRestarting && !state.busy) {
       const videos = visibleVideos();
       const master = videos.reduce((shortest, media) => !shortest || media.duration < shortest.duration ? media : shortest, null);
-      if (master?.element.ended || (master && master.element.currentTime >= master.duration - 0.025)) restartPreview();
+      if (master?.element.ended || (master && master.element.currentTime >= master.duration - 1 / 120)) restartPreview();
       else if (master) videos.forEach(media => {
         if (media !== master && !media.element.seeking && Math.abs(media.element.currentTime - master.element.currentTime) > 0.2) {
           media.element.currentTime = master.element.currentTime;
@@ -294,7 +296,6 @@ function previewFrame(now) {
       });
     }
     drawStory(previewContext, visiblePanes(), previewCanvas.width, previewCanvas.height);
-    lastPreviewPaint = now;
   }
   requestAnimationFrame(previewFrame);
 }
@@ -318,11 +319,11 @@ function resetDialog() {
   if (!dialog.open) dialog.showModal();
 }
 
-function showProgress({ phase, progress, duration }) {
-  if (phase === 'recording') {
-    $('#dialog-detail').textContent = `Your ${formatDuration(duration)} story is recording in real time.`;
+function showProgress({ phase, progress, frames, frameCount }) {
+  if (phase === 'encoding') {
+    $('#dialog-detail').textContent = `Encoding ${frames} of ${frameCount} frames at ${VIDEO_FRAME_RATE} fps.`;
     $('#export-progress').value = progress;
-    $('#progress-label').textContent = 'Recording';
+    $('#progress-label').textContent = 'Encoding';
     $('#progress-value').textContent = `${Math.floor(progress)}%`;
   } else if (phase === 'finalizing') {
     $('#dialog-detail').textContent = 'Finishing your MP4 file…';
@@ -345,7 +346,7 @@ async function startExport() {
   const { signal } = exportController;
   let wakeLock;
   try {
-    // Optional: prevent a phone from sleeping during a real-time export.
+    // Optional: prevent a phone from sleeping during export.
     try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* Not required. */ }
     signal.throwIfAborted();
     const blob = isVideo
@@ -358,7 +359,7 @@ async function startExport() {
     $('#download-button').download = `stackr-${timestamp}.${isVideo ? 'mp4' : 'jpg'}`;
     $('#download-button').hidden = false;
     $('#dialog-symbol').innerHTML = icon('check');
-    $('#dialog-detail').textContent = `${isVideo ? 'MP4 · silent' : 'JPEG'} · 1080 × 1920 · ${(blob.size / 1_000_000).toFixed(1)} MB`;
+    $('#dialog-detail').textContent = `${isVideo ? `MP4 · ${VIDEO_FRAME_RATE} fps · silent` : 'JPEG'} · 1080 × 1920 · ${(blob.size / 1_000_000).toFixed(1)} MB`;
     $('#export-progress').value = 100;
     $('#progress-label').textContent = 'Complete';
     $('#progress-value').textContent = '100%';
@@ -434,4 +435,8 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
     });
   });
 }
+getVideoExportConfig().then(config => {
+  mp4Supported = Boolean(config);
+  updateUI();
+});
 updateUI();

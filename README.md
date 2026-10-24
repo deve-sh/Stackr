@@ -37,12 +37,14 @@ There are no timelines, manual video trimming, filters, audio selection/mixing, 
 ## Export behavior
 
 - **All photos:** 1080 × 1920 JPEG, quality 0.92.
-- **At least one video:** 1080 × 1920, silent H.264 MP4, targeting 30 fps and 6 Mbps. Videos start from zero and end with the shortest visible video. Photos stay on screen for that duration.
+- **At least one video:** 1080 × 1920, silent H.264 MP4 at 60 fps, targeting 12 Mbps in the encoder's quality mode. Videos start from zero and end with the shortest visible video. Photos stay on screen for that duration.
 - Preview and export use the same crop and zoom calculations. Preview buttons, zoom controls, outlines, and thin pane guides are never exported.
-- The pre-export size estimate uses `duration × VIDEO_BITS_PER_SECOND ÷ 8 ÷ 1,000,000` to get decimal MB. The bitrate constant is shared with the recorder configuration. It estimates about 0.75 MB per second; actual encoding bitrate and MP4 container overhead can change the result. The completion dialog reports the actual blob size.
-- Video recording uses real-time canvas capture and the browser's native `MediaRecorder`: a 15-second story takes about 15 seconds plus preparation/finalization. Target size is approximately 7.5 MB per 10 seconds; the browser may choose a different actual bitrate. Long videos can therefore still produce large files. Output quality depends on the source and device; compression cannot add missing detail.
-- Stay in the app during export. Canceling, playback buffering, encoding errors, or moving to the background stops the export and preserves your composition. A screen wake lock is requested when available, but isn't required.
-- MP4 encoder support depends on the browser, operating system, and hardware. The app checks native support and does not rename WebM as MP4. If unavailable, editing and all-photo JPEG export still work. Try current Chrome/Edge or Safari on a supported device. File decoding and playback can also depend on the device's installed codecs.
+- The pre-export size estimate uses `duration × VIDEO_BITS_PER_SECOND ÷ 8 ÷ 1,000,000` to get decimal MB. The bitrate constant is shared with the encoder configuration. It estimates about 1.5 MB per second (15 MB per 10 seconds); variable encoding bitrate and MP4 container overhead can change the result. The completion dialog reports the actual blob size.
+- Video export prepares and draws each frame individually, then encodes it with the browser's native **WebCodecs VideoEncoder**. A small local MP4 writer packages the H.264 samples. Export does not record live playback or depend on display refresh rate: slower decoding/encoding takes longer instead of skipping timeline frames. Progress counts processed frames. The writer validates frame count, presentation timestamps, and duration before saving.
+- Source videos stay paused during export. The output uses a fixed 60 fps timeline: sources below 60 fps repeat frames as needed; sources above 60 fps are sampled at 60 fps. This is designed to retain the cadence of 60 fps inputs, with no 30 fps cap. H.264 export is still lossy compression and output remains 1080 × 1920; it is not a lossless copy or a way to add detail missing from the source.
+- Export speed depends on input decoding and the device, and may be slower than the video's duration. The output is held in memory, so long videos can produce large files and use substantial memory.
+- Stay in the app during export. Canceling, decoding/encoding failures, or moving to the background stops the export and preserves your composition. A screen wake lock is requested when available, but isn't required. Preview playback resumes afterward.
+- MP4 export requires WebCodecs with H.264 Level 4.2 support at 1080p60. The app probes the complete encoder configuration and never silently falls back to 30 fps, lower resolution, or WebM. If unavailable, editing and all-photo JPEG export still work. Try current Chrome/Edge or Safari on a supported device. File decoding can also depend on the device's installed codecs.
 - Mobile operating systems may block automatic video playback (for example, in low-power mode). Tap **resume video preview** if it appears. The browser may still refuse recording under resource pressure.
 - On iPhone/iPad, the download may be saved to **Files**. Open the MP4 there and use Share → Save Video to put it in Photos if that option is available.
 
@@ -75,10 +77,12 @@ For updates, change `VERSION` in `sw.js` along with your app changes. The new wo
 | `js/app.js` | Layout selection, per-frame state, pointer/keyboard controls, preview playback, dialog, installation |
 | `js/renderer.js` | Shared crop/zoom geometry, drag limits, canvas composition, shortest duration |
 | `js/media.js` | Loading, seeking, playback, and local file cleanup |
-| `js/export.js` | Full-resolution JPEG and native silent MP4 export |
+| `js/export.js` | Full-resolution JPEG, encoder capability checks, frame-by-frame silent MP4 export |
+| `js/video-timing.js` | Shared 60 fps/12 Mbps settings and integer-microsecond frame timestamps |
+| `js/mp4.js` | Video-only MP4 container writer, frame validation, playback timing, and encoder color metadata |
 | `sw.js` / `manifest.webmanifest` | Offline shell and PWA installation |
 | `dev/server.mjs` | Optional local static server using Node's standard library; serves the project root |
-| `dev/tests/renderer.test.js` | Node tests for crop/zoom geometry, drag bounds, composition, and duration |
+| `dev/tests/` | Node tests for crop/zoom geometry, duration, frame timing, and MP4 container integrity |
 | `dev/VERIFICATION.md` | Browser/export verification results and device-testing limitations |
 | `vercel.json` / `.vercelignore` | Explicit static-host settings and files excluded from Vercel deployment |
 
@@ -90,4 +94,6 @@ There are no public APIs or remote services. The three media slots exist only in
 npm test
 ```
 
-This uses Node's built-in test runner. It checks crop and zoom geometry, matching preview/export framing, movement boundaries, pane placement, and shortest-video duration, including hidden panes. See [dev/VERIFICATION.md](dev/VERIFICATION.md) for browser checks and their limitations. Chromium on Windows and emulated mobile touch have been checked; Safari and physical Android/iOS devices remain unverified.
+This uses Node's built-in test runner. It checks crop and zoom geometry, matching preview/export framing, movement boundaries, pane placement, shortest-video duration, exact frame timing, MP4 sample offsets, reordered presentation timestamps, and rejection of missing/duplicated encoded frames. See [dev/VERIFICATION.md](dev/VERIFICATION.md) for browser checks and their limitations. Chromium on Windows and emulated mobile touch have been checked; Safari and physical Android/iOS devices remain unverified.
+
+For an optional end-to-end cadence check, install Python and FFmpeg/ffprobe, then run `python dev/check-frame-cadence.py generate .qa`. Load the three generated clips in order (0, 17, 79) into the three-row layout without zooming or repositioning, export, and run `python dev/check-frame-cadence.py verify path/to/export.mp4`. It checks the frame IDs in every row, rather than trusting only the MP4's reported frame rate. These tools are not app dependencies.

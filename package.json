@@ -6,6 +6,6 @@
   "description": "A small, local-first Instagram Story layout PWA.",
   "scripts": {
     "dev": "node dev/server.mjs",
-    "test": "node --test dev/tests/renderer.test.js"
+    "test": "node --test dev/tests/renderer.test.js dev/tests/video.test.js"
   }
 }

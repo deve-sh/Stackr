@@ -1,9 +1,9 @@
 // Bump VERSION whenever app files change. A new worker waits until old tabs close.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE_PREFIX = `stackr:${self.registration.scope}:`;
 const CACHE_NAME = `${CACHE_PREFIX}${VERSION}`;
 const SHELL = ['./', './index.html', './styles.css', './js/app.js', './js/renderer.js',
-  './js/media.js', './js/export.js', './manifest.webmanifest', './icons/icon.svg',
+  './js/media.js', './js/export.js', './js/video-timing.js', './js/mp4.js', './manifest.webmanifest', './icons/icon.svg',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', event => {
